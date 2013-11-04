@@ -12,9 +12,35 @@
 
 __version__ = "0.1"
 
+import Image
 from xml.dom.minidom import parse, parseString, Node
 from optparse import OptionParser
-import os, time, stat, shutil, sys,codecs,locale,unicodedata,datetime
+import os, time, re,stat, shutil, sys,codecs,locale,unicodedata,datetime
+
+def extract_exif_time(fn):
+    if not os.path.isfile(fn):
+        return None
+    try:
+        im = Image.open(fn)
+        if hasattr(im, '_getexif'):
+            exifdata = im._getexif()
+            ctime = exifdata[0x9003]
+            #print ctime
+            return ctime
+    except: 
+        _type, value, traceback = sys.exc_info()
+        #print "Error:\n%r", value
+	return None
+    
+    return None
+
+def get_exif_prefix(fn):
+    ctime = extract_exif_time(fn)
+    if ctime is None:
+	ctime = datetime.datetime.fromtimestamp(os.path.getctime(fn)).strftime('%Y:%m:%d %H:%M:%S')
+    ctime = ctime.replace(':', '')
+    ctime = re.sub('[^\d]+', '_', ctime)
+    return ctime
 
 
 def findChildElementsByName(parent, name):
@@ -46,7 +72,7 @@ def unormalize (text ) :
 	
 	return unicodedata.normalize("NFC",text)
 
-def copyImage( sourceImageFilePath, targetFilePath , doCopy = True ) : 
+def copyImage( sourceImageFilePath, targetFilePath , doCopy = True, linkFile = False ) : 
 	
 	bCopyFile = False
 	basename = os.path.basename(targetFilePath)
@@ -72,8 +98,15 @@ def copyImage( sourceImageFilePath, targetFilePath , doCopy = True ) :
 	else:
 		bCopyFile = True
 		
-	if bCopyFile :	
-		print "\t\tCopy of %s" % ( basename ) 
+	if bCopyFile and \
+	linkFile :
+		print "\tLink of %s" % ( basename )
+		if doCopy:
+			os.link(sourceImageFilePath, targetFilePath)
+
+	elif bCopyFile and \
+	not linkFile :
+		print "\tCopy of %s" % ( basename ) 
 		if doCopy:
 			shutil.copy2(sourceImageFilePath, targetFilePath)
 	
@@ -112,6 +145,21 @@ option_parser.add_option("-t", "--test",
                              help="don't actually copy files or create folders"
 )   
 
+option_parser.add_option("-l", "--link",
+                             action="store_true", dest="link",
+                             help="don't actually copy files, just make hardlinks"
+)
+
+option_parser.add_option("-m", "--time",
+                             action="store_true", dest="time",
+                             help="destination file name will be exif time or create time"
+)
+
+option_parser.add_option("-c", "--caption",
+                             action="store_true", dest="caption",
+                             help="don't add captions to the filenames"
+)
+
 option_parser.add_option("-v", "--verbose",
                              action="store_true", dest="verbose",
                              help="display most of the actions"
@@ -133,7 +181,10 @@ if len(args) != 2:
 iPhotoLibrary = unormalize( args[0] )
 targetDir = unormalize( args[1] )
 
-doCopy = not options.test  
+useCaption = not options.caption
+useTime = options.time
+doCopy = not options.test
+linkFile = options.link  
 useEvents = not options.albums  
 verbose = options.verbose
 copyOriginal = options.original
@@ -160,9 +211,9 @@ else:
 
 for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
     if useEvents:
-        folderName = getElementText(getValueElementForKey(folderDict, "RollName"))
+        folderName = getElementText(getValueElementForKey(folderDict, "RollName")).encode('utf-8')
     else:
-        folderName = getElementText(getValueElementForKey(folderDict, "AlbumName"))
+        folderName = getElementText(getValueElementForKey(folderDict, "AlbumName")).encode('utf-8')
         if folderName == 'Photos':
             continue
 
@@ -173,12 +224,12 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
     folderName = unormalize( folderName )
     folderList.append( folderName )
 	
-    print "\n\n*Processing folder : %s" % (folderName)
+    print "\n\n*Processing folder : %s" % (folderName.encode('UTF-8'))
     #print repr(folderName)
     #print repr(targetDir)
 
     #create event/album folder
-    targetFileDir = os.path.join(targetDir, folderName)
+    targetFileDir = os.path.join(targetDir, folderName).encode('utf-8')
     if not os.path.exists(targetFileDir) :
 	
 	printv( "\t*Directory does not exist - Creating: %s" % targetFileDir )
@@ -192,24 +243,32 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
     
         imageId = getElementText(imageIdElement)
         imageDict = getValueElementForKey(masterImageListDict, imageId)
-        modifiedFilePath = getElementText(getValueElementForKey(imageDict, "ImagePath"))
+        modifiedFilePath = getElementText(getValueElementForKey(imageDict, "ImagePath")).encode('utf-8')
         originalFilePath = getElementText(getValueElementForKey(imageDict, "OriginalPath"))
-        caption = getElementText(getValueElementForKey(imageDict, "Caption"))
+        caption = getElementText(getValueElementForKey(imageDict, "Caption")).encode('utf-8')
 
         sourceImageFilePath = modifiedFilePath
-
 
 	basename = os.path.basename(sourceImageFilePath)
 	
 	#basename = unormalize( basename )
         spname, spext = os.path.splitext(basename)
-        
+        spnameOrig = spname + spext
+
+	if useTime :
+		spname = get_exif_prefix(sourceImageFilePath)
+
         # use the caption name if exists
 	if spname != caption :
-        	basename = spname  + " [" + caption.strip() + "]" + spext
-        
-        basename = unormalize( basename )
-        print "\t*Processing image '%s' , ID : %s , Caption : %s" % ( spname, imageId, caption )
+		if useCaption :
+        		basename = spname  + "_[" + caption.strip() + "]" + spext
+		else :
+			basename = spname + spext
+       	else :
+		basename = spname + spext
+ 
+        basename = unormalize( basename ).encode('utf-8')
+        print "Image: %s, ID: %s, Caption: %s, Datestamp: %s" % ( spnameOrig, imageId.encode('utf-8'), caption, get_exif_prefix(sourceImageFilePath) )
         
 	targetFilePath = os.path.join(targetFileDir , basename ) 
  
@@ -218,7 +277,7 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
 	imageList.append( basename )
 	#print repr(basename)
 
-	copyImage ( sourceImageFilePath, targetFilePath , doCopy  ) 
+	copyImage ( sourceImageFilePath, targetFilePath , doCopy , linkFile ) 
 	
 	# check if there is an original image
 	if copyOriginal and originalFilePath != None : 
@@ -226,14 +285,14 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
         	basename = os.path.basename(originalFilePath)
         	
 		spname, spext = os.path.splitext(basename)
-		targetName = spname  + " [original]" + spext  
+		targetName = spname  + "_[orig]" + spext  
 		
 		targetName = unormalize( targetName )
 		
-        	targetFilePath = os.path.join(targetFileDir , targetName )
+        	targetFilePath = os.path.join(targetFileDir , targetName.encode('utf-8') )
 		imageList.append( targetName )
         	
-        	copyImage ( originalFilePath, targetFilePath , doCopy  )
+        	copyImage ( originalFilePath, targetFilePath , doCopy , linkFile )
         	
         
     # Cleaning of this folder
@@ -263,7 +322,7 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
 print "\n===================\n"
 print "Cleaning Root folder :"
 
-for root, dirs,files in os.walk( targetDir ):
+for root, dirs,files in os.walk( targetDir.encode('utf-8') ):
 	for name in dirs:
 		
 		#print "folder ", name 
@@ -271,13 +330,13 @@ for root, dirs,files in os.walk( targetDir ):
 		#print "repr : ",repr(name)
 		
 			
-		name = unormalize(name)
+		name = unormalize(name).encode('utf-8')
 		
 		if name not in folderList : 
 			
 			printv( "- remove '%s' " % name)
 			#print repr(name)
-			shutil.rmtree( os.path.join( targetDir, name )  )
+			shutil.rmtree( os.path.join( targetDir.encode('utf-8'), name )  )
 	  			
 print "cleaning done."
 print ""
