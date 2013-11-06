@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 
@@ -12,7 +11,7 @@
 
 __version__ = "0.1"
 
-import Image
+import pip
 from xml.dom.minidom import parse, parseString, Node
 from optparse import OptionParser
 import os, time, re,stat, shutil, sys,codecs,locale,unicodedata,datetime
@@ -37,7 +36,12 @@ def extract_exif_time(fn):
 def get_exif_prefix(fn):
     ctime = extract_exif_time(fn)
     if ctime is None:
-	ctime = datetime.datetime.fromtimestamp(os.path.getctime(fn)).strftime('%Y:%m:%d %H:%M:%S')
+	try:
+	    ctime = datetime.datetime.fromtimestamp(os.path.getctime(fn)).strftime('%Y:%m:%d %H:%M:%S')
+	except:
+	    _type, value, traceback = sys.exc_info()
+	    ctime = os.path.basename(fn).split('.',1)[0]
+	    return ctime
     ctime = ctime.replace(':', '')
     ctime = re.sub('[^\d]+', '_', ctime)
     return ctime
@@ -247,8 +251,11 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
         originalFilePath = getElementText(getValueElementForKey(imageDict, "OriginalPath"))
         caption = getElementText(getValueElementForKey(imageDict, "Caption")).encode('utf-8')
 
+	modfp =  modifiedFilePath.split('.photolibrary/',1)
+        modifiedFilePath = unormalize( args[0] ) + '/' + modfp[1]
+        
         sourceImageFilePath = modifiedFilePath
-
+        
 	basename = os.path.basename(sourceImageFilePath)
 	
 	#basename = unormalize( basename )
@@ -271,7 +278,7 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
         print "Image: %s, ID: %s, Caption: %s, Datestamp: %s" % ( spnameOrig, imageId.encode('utf-8'), caption, get_exif_prefix(sourceImageFilePath) )
         
 	targetFilePath = os.path.join(targetFileDir , basename ) 
- 
+
         #add this image to the imageList for later folder cleaning
          
 	imageList.append( basename )
