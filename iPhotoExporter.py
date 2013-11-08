@@ -7,43 +7,42 @@
 #
 # IPhotoExporter is a python script that exports and synchronizes 
 # events or iPhoto albums (MacOSX) simply in folders.
-# 
+#
 
-__version__ = "0.1"
+__version__ = "0.2"
 
-import pip
+from unidecode import unidecode
+from PIL import Image
 from xml.dom.minidom import parse, parseString, Node
 from optparse import OptionParser
-import os, time, re,stat, shutil, sys,codecs,locale,unicodedata,datetime
+import os, time, re,stat, shutil, sys,codecs,locale,datetime
 
 def extract_exif_time(fn):
     if not os.path.isfile(fn):
-        return None
+	return None
     try:
         im = Image.open(fn)
         if hasattr(im, '_getexif'):
             exifdata = im._getexif()
             ctime = exifdata[0x9003]
-            #print ctime
+	    if ctime == '0000:00:00 00:00:00' :
+		return None
             return ctime
     except: 
         _type, value, traceback = sys.exc_info()
         #print "Error:\n%r", value
 	return None
-    
+
     return None
 
 def get_exif_prefix(fn):
+    fn = unormalize(fn)
     ctime = extract_exif_time(fn)
     if ctime is None:
-	try:
-	    ctime = datetime.datetime.fromtimestamp(os.path.getctime(fn)).strftime('%Y:%m:%d %H:%M:%S')
-	except:
-	    _type, value, traceback = sys.exc_info()
-	    ctime = os.path.basename(fn).split('.',1)[0]
-	    return ctime
+	    return spname
     ctime = ctime.replace(':', '')
     ctime = re.sub('[^\d]+', '_', ctime)
+
     return ctime
 
 
@@ -67,57 +66,57 @@ def getValueElementForKey(parent, keyName):
                 sib = sib.nextSibling
             return sib
 
-
 def unormalize (text ) :
-	
-	if type(text) is not unicode : 
-		#print ">>converting text",text,"(repr:", repr(text) , " )to unicode"
-		text =   text.decode("utf-8")
-	
-	return unicodedata.normalize("NFC",text)
+    if type(text) is not unicode :
+	#print ">>converting text",text,"(repr:", repr(text) , " )to unicode"
+	text =   text.decode("utf-8")
+
+    return unidecode(text)
 
 def copyImage( sourceImageFilePath, targetFilePath , doCopy = True, linkFile = False ) : 
-	
+
+	sourceImageFilePath =  unormalize( args[0] ) + '/' + sourceImageFilePath.split('.photolibrary/',1)[1]
+
 	bCopyFile = False
 	basename = os.path.basename(targetFilePath)
-	
+
 	if os.path.exists(targetFilePath):
 	# if file already exists, compare modification dates
 		targetStat = os.stat(targetFilePath)
 		modifiedStat = os.stat(sourceImageFilePath)
-     
-		printv( "\t\tFile exists : %s , compare : " % (basename) )
-		printv( "\t\t - modified: %d %d" % (modifiedStat[stat.ST_MTIME], modifiedStat[stat.ST_SIZE]) )
-		printv( "\t\t - target  : %d %d" % (targetStat[stat.ST_MTIME], targetStat[stat.ST_SIZE]) )
-	
+
+		printv( "- File exists : %s , compare : " % (basename) )
+		printv( "  * modified: %d %d" % (modifiedStat[stat.ST_MTIME], modifiedStat[stat.ST_SIZE]) )
+		printv( "  * target  : %d %d" % (targetStat[stat.ST_MTIME], targetStat[stat.ST_SIZE]) )
+
 		#why oh why is modified time not getting copied over exactly the same?
 		if abs(targetStat[stat.ST_MTIME] - modifiedStat[stat.ST_MTIME]) > 10 or targetStat[stat.ST_SIZE] != modifiedStat[stat.ST_SIZE]:
-			 
-			printv( "\t\t --> File modified" )
+			printv( "\t --> File modified" )
 			bCopyFile = True
-			
 		else : 
-			printv( "\t\t --> File identical" )
-			 
+			printv( "\t --> File identical" )
 	else:
 		bCopyFile = True
-		
 	if bCopyFile and \
 	linkFile :
-		print "\tLink of %s" % ( basename )
+		print "- Link of %s will be %s" % (os.path.basename(sourceImageFilePath) ,os.path.basename(targetFilePath) )
 		if doCopy:
-			os.link(sourceImageFilePath, targetFilePath)
+			try:
+			    os.link(sourceImageFilePath, targetFilePath)
+			except:
+			    _type, value, traceback = sys.exc_info()
+			    print 'unable to link file: ' + basename
 
 	elif bCopyFile and \
 	not linkFile :
-		print "\tCopy of %s" % ( basename ) 
+		print "- Copy of %s will be %s" % ( os.path.basename(sourceImageFilePath) ,os.path.basename(targetFilePath)  )
 		if doCopy:
-			shutil.copy2(sourceImageFilePath, targetFilePath)
-	
-	
-	return  
-
- 
+			try:
+			    shutil.copy2(sourceImageFilePath, targetFilePath)
+			except:
+			    _type, value, traceback = sys.exc_info()
+			    print 'unable to copy file: ' + basename
+	return
 
 def printv(*args):
 	if verbose :
@@ -147,7 +146,7 @@ option_parser.add_option("-a", "--albums",
 option_parser.add_option("-t", "--test",
                              action="store_true", dest="test",
                              help="don't actually copy files or create folders"
-)   
+)
 
 option_parser.add_option("-l", "--link",
                              action="store_true", dest="link",
@@ -167,12 +166,12 @@ option_parser.add_option("-c", "--caption",
 option_parser.add_option("-v", "--verbose",
                              action="store_true", dest="verbose",
                              help="display most of the actions"
-)  
+)
 
 option_parser.add_option("-o", "--original",
                              action="store_true", dest="original",
                              help="also copy original photos"
-)  
+)
 
 (options, args) = option_parser.parse_args()
 
@@ -188,8 +187,8 @@ targetDir = unormalize( args[1] )
 useCaption = not options.caption
 useTime = options.time
 doCopy = not options.test
-linkFile = options.link  
-useEvents = not options.albums  
+linkFile = options.link
+useEvents = not options.albums
 verbose = options.verbose
 copyOriginal = options.original
 
@@ -209,82 +208,77 @@ if useEvents:
 	listOfSomethingArray = getValueElementForKey(topMostDict, "List of Rolls")
 else:
 	listOfSomethingArray = getValueElementForKey(topMostDict, "List of Albums")
-    
+
 
 #walk through all the rolls (events) / albums
 
 for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
     if useEvents:
-        folderName = getElementText(getValueElementForKey(folderDict, "RollName")).encode('utf-8')
+        folderName = getElementText(getValueElementForKey(folderDict, "RollName"))
     else:
-        folderName = getElementText(getValueElementForKey(folderDict, "AlbumName")).encode('utf-8')
+        folderName = getElementText(getValueElementForKey(folderDict, "AlbumName"))
         if folderName == 'Photos':
             continue
 
     #walk through all the images in this roll/event/album
     imageIdArray = getValueElementForKey(folderDict, "KeyList")
-    
+
     #add this event/album in the folderList for later root dir cleaning
     folderName = unormalize( folderName )
     folderList.append( folderName )
-	
-    print "\n\n*Processing folder : %s" % (folderName.encode('UTF-8'))
+
+    print "\n*Processing folder : %s" % (folderName)
     #print repr(folderName)
     #print repr(targetDir)
 
     #create event/album folder
-    targetFileDir = os.path.join(targetDir, folderName).encode('utf-8')
+    targetFileDir = os.path.join(targetDir, folderName)
     if not os.path.exists(targetFileDir) :
-	
 	printv( "\t*Directory does not exist - Creating: %s" % targetFileDir )
 	if doCopy:
 		os.makedirs(targetFileDir)
-    
+
     #image list for later folder cleaning
     imageList = [] 
-    
+
     for imageIdElement in findChildElementsByName(imageIdArray, 'string'):
-    
+
         imageId = getElementText(imageIdElement)
         imageDict = getValueElementForKey(masterImageListDict, imageId)
-        modifiedFilePath = getElementText(getValueElementForKey(imageDict, "ImagePath")).encode('utf-8')
+        modifiedFilePath = getElementText(getValueElementForKey(imageDict, "ImagePath"))
         originalFilePath = getElementText(getValueElementForKey(imageDict, "OriginalPath"))
-        caption = getElementText(getValueElementForKey(imageDict, "Caption")).encode('utf-8')
+        caption = getElementText(getValueElementForKey(imageDict, "Caption"))
 
-	modfp =  modifiedFilePath.split('.photolibrary/',1)
-        modifiedFilePath = unormalize( args[0] ) + '/' + modfp[1]
-        
-        sourceImageFilePath = modifiedFilePath
-        
+        sourceImageFilePath = unormalize(args[0] + '/' + modifiedFilePath.split('.photolibrary/',1)[1])
+
 	basename = os.path.basename(sourceImageFilePath)
-	
-	#basename = unormalize( basename )
+
         spname, spext = os.path.splitext(basename)
         spnameOrig = spname + spext
 
-	if useTime :
-		spname = get_exif_prefix(sourceImageFilePath)
-
-        # use the caption name if exists
-	if spname != caption :
-		if useCaption :
-        		basename = spname  + "_[" + caption.strip() + "]" + spext
-		else :
-			basename = spname + spext
-       	else :
+	#deal with caption and time in filename
+	if useCaption :
+	    if useTime :
+		basename = get_exif_prefix(unormalize(sourceImageFilePath))  + "_[" + caption.strip() + "]" + spext
+	    else:
+		basename = caption.strip() + spext
+	else :
+	    if useTime :
+		basename = get_exif_prefix(unormalize(sourceImageFilePath)) + spext
+	    else:
 		basename = spname + spext
- 
-        basename = unormalize( basename ).encode('utf-8')
-        print "Image: %s, ID: %s, Caption: %s, Datestamp: %s" % ( spnameOrig, imageId.encode('utf-8'), caption, get_exif_prefix(sourceImageFilePath) )
-        
-	targetFilePath = os.path.join(targetFileDir , basename ) 
+
+        basename = unormalize( basename )
+        print "Image: %s, ID: %s, Caption: %s, Datestamp: %s" % ( unormalize(spnameOrig), imageId, unormalize(caption), get_exif_prefix(unormalize(sourceImageFilePath)) )
+
+	targetFilePath = os.path.join(unormalize(targetFileDir) , basename )
 
         #add this image to the imageList for later folder cleaning
-         
+
 	imageList.append( basename )
 	#print repr(basename)
 
-	copyImage ( sourceImageFilePath, targetFilePath , doCopy , linkFile ) 
+	copyImage ( unormalize(sourceImageFilePath), targetFilePath , doCopy , linkFile ) 
 	
 	# check if there is an original image
 	if copyOriginal and originalFilePath != None : 
@@ -296,17 +290,15 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
 		
 		targetName = unormalize( targetName )
 		
-        	targetFilePath = os.path.join(targetFileDir , targetName.encode('utf-8') )
+        	targetFilePath = os.path.join(targetFileDir , targetName )
 		imageList.append( targetName )
         	
         	copyImage ( originalFilePath, targetFilePath , doCopy , linkFile )
         	
-        
     # Cleaning of this folder
- 
     #searches the directory for files and compare to imageList
     #delete files not present in imageList
-    print "\n\t*Cleaning of the folder :"
+    print "\nCleaning of the folder :"
     for root, dirs, files in os.walk( targetFileDir ):
 	for name in files:
 		
@@ -321,48 +313,27 @@ for folderDict in findChildElementsByName(listOfSomethingArray, 'dict'):
 			
 			os.remove( targetFileDir + "/" + name )
 			
-    print "\tcleaning done."		 
-
-
+    print " done"
 
 #Cleaning Root Folder
-print "\n===================\n"
-print "Cleaning Root folder :"
+print "\nCleaning Root folder :"
 
-for root, dirs,files in os.walk( targetDir.encode('utf-8') ):
+for root, dirs,files in os.walk( targetDir ):
 	for name in dirs:
-		
 		#print "folder ", name 
 		#print "type : ",type(name)
 		#print "repr : ",repr(name)
-		
-			
-		name = unormalize(name).encode('utf-8')
-		
+		name = unormalize(name)
 		if name not in folderList : 
-			
 			printv( "- remove '%s' " % name)
 			#print repr(name)
-			shutil.rmtree( os.path.join( targetDir.encode('utf-8'), name )  )
-	  			
-print "cleaning done."
-print ""
+			shutil.rmtree( os.path.join( targetDir, name )  )
+print " done"
 
 albumDataDom.unlink()
 
 stopTime = time.time()
 
 elapsedTime = stopTime - startTime
-
-print "Elapsed time : ", datetime.timedelta(seconds=elapsedTime )
 print ""
-
-
-
-	    
-		 
-	
-	 
-	    
- 
- 
+print "Elapsed time : ", datetime.timedelta(seconds=elapsedTime )
